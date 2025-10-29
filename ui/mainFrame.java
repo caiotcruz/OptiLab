@@ -24,6 +24,7 @@ import java.util.regex.Pattern;
 public class mainFrame extends JFrame {
 
     private JTextArea inputArea;
+    private JTextArea dualArea;
     private JComboBox<String> metodoComboBox;
     private JButton resolverButton;
     private JTextArea outputArea;
@@ -64,13 +65,32 @@ public class mainFrame extends JFrame {
         // Painel Principal (Input e Output) 
         JSplitPane splitPane = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT);
         
-        // Painel de Input
+        // Painel da Esquerda (Input e Dual)
         JPanel leftPanel = new JPanel(new BorderLayout());
         leftPanel.add(new JLabel("Defina o Problema (Formato LP):"), BorderLayout.NORTH);
+
+        // Input (Superior)
         inputArea = new JTextArea();
         inputArea.setFont(new Font("Monospaced", Font.PLAIN, 14));
         inputArea.setText(getExemploProblema()); // Carrega um exemplo
-        leftPanel.add(new JScrollPane(inputArea), BorderLayout.CENTER);
+        JScrollPane inputScrollPane = new JScrollPane(inputArea);
+
+        // Dual (Inferior)
+        JPanel dualPanel = new JPanel(new BorderLayout());
+        dualPanel.add(new JLabel("Problema Dual Gerado:"), BorderLayout.NORTH);
+        dualArea = new JTextArea();
+        dualArea.setFont(new Font("Monospaced", Font.PLAIN, 14));
+        dualArea.setEditable(false);
+        dualArea.setBackground(new Color(240, 240, 240));
+        dualPanel.add(new JScrollPane(dualArea), BorderLayout.CENTER);
+
+        // Novo SplitPane Vertical para Input/Dual
+        JSplitPane verticalSplit = new JSplitPane(JSplitPane.VERTICAL_SPLIT, inputScrollPane, dualPanel);
+        verticalSplit.setDividerLocation(300);
+
+        leftPanel.add(verticalSplit, BorderLayout.CENTER); // Adiciona o split pane ao leftPanel
+
+        splitPane.setLeftComponent(leftPanel);
 
         // Painel de Output
         JPanel rightPanel = new JPanel(new BorderLayout());
@@ -107,6 +127,15 @@ public class mainFrame extends JFrame {
             metodoOtimizacao solverEscolhido = solvers.get(selectedIndex);
 
             problemaLinear problema = parseProblema(inputArea.getText());
+
+            try {
+                // 2. Gere o dual
+                problemaLinear dual = problema.gerarDual();
+                // 3. Formate o dual para texto
+                dualArea.setText(formatarProblema(dual));
+            } catch (Exception exDual) {
+                dualArea.setText("Erro ao gerar o dual: " + exDual.getMessage());
+            }
 
             // Limpa a área de output
             outputArea.setText("Resolvendo com " + solverEscolhido.getNome() + "...\n\n");
@@ -308,6 +337,52 @@ public class mainFrame extends JFrame {
         return Double.parseDouble(coefStr);
     }
 
+    private String formatarProblema(problemaLinear p) {
+        StringBuilder sb = new StringBuilder();
+        String[] nomes = p.getNomesVariaveis();
+
+        // 1. Função Objetivo
+        sb.append(p.getTipo() == tipoOtimizacao.MINIMIZAR ? "min: " : "max: ");
+        double[] c = p.getC_objetivo();
+        for (int j = 0; j < c.length; j++) {
+            if (Math.abs(c[j]) < 1e-9) continue; // Ignora custo zero
+            sb.append(String.format("%+.2f%s ", c[j], nomes[j]));
+        }
+        sb.append("\n");
+
+        // 2. Restrições
+        sb.append("st:\n");
+        double[][] A = p.getA_restricoes();
+        double[] b = p.getB_limites();
+        tipoRestricao[] r = p.getTiposRestricoes();
+
+        for (int i = 0; i < A.length; i++) {
+            sb.append("  ");
+            for (int j = 0; j < A[i].length; j++) {
+                if (Math.abs(A[i][j]) < 1e-9) continue; // Ignora coef zero
+                sb.append(String.format("%+.2f%s ", A[i][j], nomes[j]));
+            }
+            
+            if (r[i] == tipoRestricao.MENOR_IGUAL) sb.append("<= ");
+            else if (r[i] == tipoRestricao.MAIOR_IGUAL) sb.append(">= ");
+            else if (r[i] == tipoRestricao.IGUAL) sb.append("= ");
+            
+            sb.append(String.format("%.2f\n", b[i]));
+        }
+
+        // 3. Variáveis Livres
+        Set<String> livres = p.getNomesVariaveisLivres();
+        if (!livres.isEmpty()) {
+            sb.append("livres:\n");
+            for (String nomeLivre : livres) {
+                sb.append("  ").append(nomeLivre).append("\n");
+            }
+        }
+
+        sb.append("end");
+        return sb.toString().replace("+", " + ").replace("-", " - ");
+    }
+
     private String formatarSolucao(solucao sol, problemaLinear p) {
         StringBuilder sb = new StringBuilder();
         sb.append("Status: ").append(sol.getStatus()).append("\n");
@@ -320,12 +395,16 @@ public class mainFrame extends JFrame {
             double[] valores = sol.getValoresVariaveis();
             
             if (valores != null) {
-                for (int i = 0; i < valores.length; i++) {
-                    sb.append(String.format("  %s: %.4f\n", nomes[i], valores[i]));
+            for (int i = 0; i < nomes.length; i++) { 
+                // Garante que não vamos ler 'valores' fora dos limites
+                if (i < valores.length) {
+                    sb.append(String.format("   %s: %.4f\n", nomes[i], valores[i]));
+                } else {
+                    // Segurança, caso 'valores' seja mais curto que 'nomes'
+                    sb.append(String.format("   %s: (valor não disponível)\n", nomes[i]));
                 }
-            } else {
-                 sb.append("  (Valores não retornados pelo solver stub)\n");
             }
+        }
         }
         return sb.toString();
     }
