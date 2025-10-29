@@ -1,5 +1,7 @@
 package model;
 
+import java.util.Set;
+
 public class problemaLinear {
     
     private double[] c_objetivo;
@@ -8,15 +10,17 @@ public class problemaLinear {
     private String[] nomesVariaveis; 
     private tipoOtimizacao tipo;
     private tipoRestricao[] tiposRestricoes;
+    private Set<String> nomesVariaveisLivres;
 
     // Construtor principal
-    public problemaLinear(tipoOtimizacao tipo, double[] c_objetivo, double[][] A_restricoes, double[] b_limites, tipoRestricao[] tiposRestricoes, String[] nomesVariaveis) {
+    public problemaLinear(tipoOtimizacao tipo, double[] c_objetivo, double[][] A_restricoes, double[] b_limites, tipoRestricao[] tiposRestricoes, String[] nomesVariaveis, Set<String> nomesVariaveisLivres) {
         this.tipo = tipo;
         this.c_objetivo = c_objetivo;
         this.A_restricoes = A_restricoes;
         this.b_limites = b_limites;
         this.tiposRestricoes = tiposRestricoes;
         this.nomesVariaveis = nomesVariaveis;
+        this.nomesVariaveisLivres = nomesVariaveisLivres;
         
         // Validação simples
         if (c_objetivo.length != nomesVariaveis.length) {
@@ -33,4 +37,5 @@ public class problemaLinear {
     public int getNumVariaveis() { return c_objetivo.length; }
     public int getNumRestricoes() { return A_restricoes.length; }
     public String[] getNomesVariaveis() { return nomesVariaveis; }
+    public Set<String> getNomesVariaveisLivres() { return nomesVariaveisLivres; }
 }

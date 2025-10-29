@@ -13,8 +13,10 @@ import javax.swing.*;
 import java.awt.*;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.function.Consumer;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -104,8 +106,7 @@ public class mainFrame extends JFrame {
             int selectedIndex = metodoComboBox.getSelectedIndex();
             metodoOtimizacao solverEscolhido = solvers.get(selectedIndex);
 
-            String textoProblema = inputArea.getText();
-            problemaLinear problema = parseProblema(textoProblema); 
+            problemaLinear problema = parseProblema(inputArea.getText());
 
             // Limpa a área de output
             outputArea.setText("Resolvendo com " + solverEscolhido.getNome() + "...\n\n");
@@ -140,6 +141,7 @@ public class mainFrame extends JFrame {
         List<double[]> aList = new ArrayList<>();
         List<Double> bList = new ArrayList<>();
         List<tipoRestricao> rList = new ArrayList<>();
+        Set<String> variaveisLivres = new HashSet<>();
 
         // Parsear Função Objetivo
         String linhaObj = "";
@@ -181,72 +183,99 @@ public class mainFrame extends JFrame {
             throw new IllegalArgumentException("Nenhuma variável encontrada na função objetivo.");
         }
 
-        // Parsear Restrições
+        // Parsear Restrições e variáveis livres
         boolean emRestricoes = false;
+        boolean emVariaveisLivres = false;
         for (String linha : linhas) {
             linha = linha.trim();
             if (linha.equals("st:") || linha.equals("s.t.:")) {
                 emRestricoes = true;
                 continue;
             }
+            if (linha.equals("livres:") || linha.equals("free:")) {
+                emRestricoes = false;
+                emVariaveisLivres = true;
+                continue;
+            }
+            if (linha.equals("end")) {
+                 emRestricoes = false;
+                 emVariaveisLivres = false;
+                 break;
+            }
+
+            if (emVariaveisLivres) {
+                // Seção 'livres:'
+                String[] nomes = linha.split("\\s+");
+                for(String nomeVar : nomes) {
+                    if (!nomeVar.isEmpty() && varMap.containsKey(nomeVar)) {
+                        variaveisLivres.add(nomeVar);
+                    } else if (!nomeVar.isEmpty()) {
+                        throw new IllegalArgumentException("Variável livre '" + nomeVar + "' não foi definida na função objetivo.");
+                    }
+                }
+                continue; // Próxima linha
+            }
+
             if (!emRestricoes || linha.isEmpty() || linha.startsWith("max:") || linha.startsWith("min:")) {
                 continue;
             }
-            if (linha.equals("end")) break;
             
             // Ignora linhas de não-negatividade (já são padrão)
             if (linha.matches("[a-zA-Z]+\\d*\\s*(>=|>=?)\\s*0")) {
                 continue;
             }
 
-            Matcher opMatcher = OP_PATTERN.matcher(linha);
-            if (!opMatcher.find()) {
-                throw new IllegalArgumentException("Restrição sem operador (<=, >=, =): " + linha);
-            }
-            
-            String lhs = linha.substring(0, opMatcher.start());
-            String op = opMatcher.group(1);
-            String rhs = linha.substring(opMatcher.end());
-            
-            double[] aRow = new double[numVariaveis];
-            Matcher termoMatcher = TERMO_PATTERN.matcher(lhs);
-            while (termoMatcher.find()) {
-                double coef = parseCoeficiente(termoMatcher.group(1));
-                String varNome = termoMatcher.group(2);
-                
-                if (!varMap.containsKey(varNome)) {
-                    // Tenta adicionar a variável se ela não estiver no objetivo (coef 0)
-                    varMap.put(varNome, numVariaveis++);
-                    cList.add(0.0);
-                    // Redimensiona todas as linhas 'a' anteriores
-                    for(int i=0; i < aList.size(); i++) {
-                        double[] oldRow = aList.get(i);
-                        double[] newRow = new double[numVariaveis];
-                        System.arraycopy(oldRow, 0, newRow, 0, oldRow.length);
-                        aList.set(i, newRow);
-                    }
-                    aRow = new double[numVariaveis]; // Recria a linha atual
+           if (emRestricoes) {
+                if (linha.matches("[a-zA-Z]+\\d*\\s*(>=|>=?)\\s*0")) {
+                    continue; // Ignora x_i >= 0
+                }
+
+                Matcher opMatcher = OP_PATTERN.matcher(linha);
+                if (!opMatcher.find()) {
+                    throw new IllegalArgumentException("Restrição sem operador (<=, >=, =): " + linha);
                 }
                 
-                aRow[varMap.get(varNome)] += coef;
+                String lhs = linha.substring(0, opMatcher.start());
+                String op = opMatcher.group(1);
+                String rhs = linha.substring(opMatcher.end());
+                
+                double[] aRow = new double[numVariaveis];
+                Matcher termoMatcher = TERMO_PATTERN.matcher(lhs);
+                while (termoMatcher.find()) {
+                    double coef = parseCoeficiente(termoMatcher.group(1));
+                    String varNome = termoMatcher.group(2);
+                    
+                    if (!varMap.containsKey(varNome)) {
+                        // Variável não está no objetivo. Adicioná-la com custo 0.
+                        varMap.put(varNome, numVariaveis++);
+                        cList.add(0.0);
+                        // Redimensiona todas as linhas 'a' anteriores
+                        for(int i=0; i < aList.size(); i++) {
+                            double[] oldRow = aList.get(i);
+                            double[] newRow = new double[numVariaveis];
+                            System.arraycopy(oldRow, 0, newRow, 0, oldRow.length);
+                            aList.set(i, newRow);
+                        }
+                        aRow = new double[numVariaveis]; // Recria a linha atual
+                    }
+                    
+                    aRow[varMap.get(varNome)] += coef;
+                }
+                
+                double b = Double.parseDouble(rhs.trim());
+                tipoRestricao r;
+                
+                if (op.equals("<=")) r = tipoRestricao.MENOR_IGUAL;
+                else if (op.equals(">=")) r = tipoRestricao.MAIOR_IGUAL;
+                else if (op.equals("=")) r = tipoRestricao.IGUAL;
+                else {
+                     throw new IllegalArgumentException("Operador de restrição desconhecido: " + op);
+                }
+                
+                aList.add(aRow);
+                bList.add(b);
+                rList.add(r);
             }
-            
-            double b = Double.parseDouble(rhs.trim());
-            tipoRestricao r;
-            
-            if (op.equals("<=")) {
-                r = tipoRestricao.MENOR_IGUAL;
-            } else if (op.equals(">=")) {
-                r = tipoRestricao.MAIOR_IGUAL;
-            } else if (op.equals("=")) {
-                r = tipoRestricao.IGUAL;
-            } else {
-                 throw new IllegalArgumentException("Operador de restrição desconhecido: " + op);
-            }
-            
-            aList.add(aRow);
-            bList.add(b);
-            rList.add(r);
         }
         
         // Montar o objeto problemaLinear 
@@ -264,7 +293,7 @@ public class mainFrame extends JFrame {
             nomesVariaveis[entry.getValue()] = entry.getKey();
         }
 
-        return new problemaLinear(tipo, c, A, b, r, nomesVariaveis);
+        return new problemaLinear(tipo, c, A, b, r, nomesVariaveis, variaveisLivres);
     }
     
     // Helper para converter o coeficiente do regex (ex: "+ ", "-", " 3.5", "-2")
